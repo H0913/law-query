@@ -113,6 +113,10 @@ mark{background:#ffe58a;color:inherit;padding:0 1px;border-radius:2px}
 .rbar .rtitle .m{font-size:11px;color:var(--sub);margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .rbar .fsbtn{width:38px;height:38px;border-radius:10px;display:grid;place-items:center;font-weight:700;color:var(--brand2);font-size:16px}
 .rbar .fsbtn:active{background:#eef2f8}
+.rsbar{display:flex;align-items:center;gap:8px;padding:8px 12px;background:#fff;border-bottom:1px solid var(--line)}
+.rsbar input{flex:1;min-width:0;border:1px solid var(--line);border-radius:10px;padding:9px 12px;font-size:15px;outline:0;background:#f7f8fa}
+.rsbar .cancel{color:var(--brand2);font-size:13px;padding:6px 8px;flex:0 0 auto}
+.rspanel{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:4px 0 40px;background:var(--bg)}
 #tocbar{
   display:flex;gap:8px;overflow-x:auto;padding:8px 12px;background:#fff;border-bottom:1px solid var(--line);
   scrollbar-width:none;position:relative;z-index:2
@@ -222,8 +226,14 @@ nav.tabbar button svg{width:21px;height:21px}
     <div class="rbar">
       <button class="back" id="readBack" aria-label="返回"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="#12294d" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg></button>
       <div class="rtitle"><h2 id="readTitle">—</h2><div class="m" id="readMeta"></div></div>
+      <button class="fsbtn" id="rsToggle" aria-label="本法内搜索"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="#1e4a86" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg></button>
       <button class="fsbtn" id="fsToggle" aria-label="字号">A</button>
     </div>
+    <div class="rsbar hide" id="rsBar">
+      <input id="rsQ" type="search" inputmode="search" placeholder="本法内搜索：关键词或条号，如「违约金」「585」「第585条」" autocomplete="off" autocapitalize="off" autocorrect="off">
+      <button class="cancel" id="rsClose">取消</button>
+    </div>
+    <div class="rspanel hide" id="rsPanel"></div>
     <div id="tocbar"></div>
     <div class="rbody" id="rbody"><div class="doc" id="readDoc"></div></div>
   </div>
@@ -410,6 +420,7 @@ document.documentElement.style.setProperty("--read-fs",curFs+"px");
 
 function openLaw(id, targetNo, q){
   const l=LAWS[id]; if(!l) return;
+  closeReadSearch();
   curLaw=l;
   $('#readTitle').textContent=l.title;
   $('#readMeta').textContent=[l.meta.status,l.meta.effective_date?("施行 "+l.meta.effective_date):"",l.meta.authority].filter(Boolean).join(" · ");
@@ -458,7 +469,47 @@ function starClick(e,lawId,no){
   toggleFav(lawId,no,txt);
   e.currentTarget.classList.toggle("on");
 }
-function closeRead(){ $('#view-read').classList.remove("open"); curLaw=null; if(curTab==="fav") renderFav(); }
+function closeRead(){ $('#view-read').classList.remove("open"); closeReadSearch(); curLaw=null; if(curTab==="fav") renderFav(); }
+
+/* 本法内搜索 */
+let rsOpen=false;
+function openReadSearch(){
+  if(!curLaw) return; rsOpen=true;
+  $('#rsBar').classList.remove('hide'); $('#tocbar').classList.add('hide');
+  $('#rbody').classList.add('hide'); $('#rsPanel').classList.remove('hide');
+  const i=$('#rsQ'); i.value=''; renderRs(''); i.focus();
+}
+function closeReadSearch(){
+  rsOpen=false;
+  $('#rsBar').classList.add('hide'); $('#rsPanel').classList.add('hide');
+  $('#tocbar').classList.remove('hide'); $('#rbody').classList.remove('hide');
+}
+function renderRs(q){
+  q=(q||'').trim();
+  if(!curLaw) return;
+  if(!q){ $('#rsPanel').innerHTML='<div class="empty">输入关键词或条号，在本法内检索</div>'; return; }
+  const numQ = isNumQuery(q) ? parseNumQuery(q) : null;
+  const hits=[];
+  curLaw.blocks.forEach((b,i)=>{
+    if(b.k!=='article') return;
+    let score=0;
+    if(numQ){ const an=artNumOf(b.n); if(an.base===numQ.base && an.sub===numQ.sub) score=100; }
+    const idx=b.t.indexOf(q);
+    if(idx>=0 && score<100) score=(b.t.startsWith(q)||b.n===q)?60:30;
+    if(score>0) hits.push({b,i,score});
+  });
+  hits.sort((a,b)=>b.score-a.score);
+  if(!hits.length){ $('#rsPanel').innerHTML=`<div class="empty">本法内没有找到「${esc(q)}」<br>试试换个词，或输入条号如 585</div>`; return; }
+  $('#rsPanel').innerHTML = `<div class="stat">本法内命中 ${hits.length} 条</div>` + hits.map(h=>
+    `<a class="result" onclick="jumpInLaw(${h.i},'${esc(h.b.n).replace(/'/g,"\\'")}')">
+      <div class="rtop"><span class="law">${esc(curLaw.title)}</span><span class="art">${esc(h.b.n)}</span></div>
+      <div class="snip">${snippetOf(h.b.t,q)}</div></a>`).join('');
+}
+function jumpInLaw(bi, no){
+  closeReadSearch();
+  const el=document.getElementById('art_'+bi);
+  if(el){ setTimeout(()=>{ el.scrollIntoView({block:'start'}); el.classList.add('flash'); setTimeout(()=>el.classList.remove('flash'),1600); },60); addRecent(curLaw.id,no); }
+}
 
 /* ================= fav & history ================= */
 function renderFav(){
@@ -504,6 +555,9 @@ $("#seg").addEventListener("click",e=>{
 });
 $("#tabbar").addEventListener("click",e=>{const b=e.target.closest("button[data-tab]");if(b)switchTab(b.dataset.tab);});
 $("#readBack").addEventListener("click",closeRead);
+$("#rsToggle").addEventListener("click",()=>{ rsOpen?closeReadSearch():openReadSearch(); });
+$("#rsClose").addEventListener("click",closeReadSearch);
+$("#rsQ").addEventListener("input",e=>renderRs(e.target.value));
 $("#fsToggle").addEventListener("click",()=>{
   curFs = curFs>=21?15:curFs+2; document.documentElement.style.setProperty("--read-fs",curFs+"px"); S.set("law_fs",curFs);
 });
